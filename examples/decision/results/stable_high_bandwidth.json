@@ -1,0 +1,120 @@
+{
+  "decisions": [
+    {
+      "segment_id": "seg-00",
+      "rendition_id": "1080p",
+      "bitrate_kbps": 3500,
+      "priority": 1.7225000000000001,
+      "utility": 1.0,
+      "explanation": {
+        "top_factors": [
+          {
+            "factor": "motion",
+            "contribution": 0.225
+          },
+          {
+            "factor": "saliency",
+            "contribution": 0.2
+          },
+          {
+            "factor": "scene_type",
+            "contribution": 0.2
+          }
+        ],
+        "utility_gain_vs_lower": 0.34514191228993274,
+        "utility_gain_vs_higher": null,
+        "stopping_constraint": "ladder_top",
+        "switch_suppressed": false,
+        "human": "Selected 1080p at priority 1.72; next upgrade gain is 0.000, stopped by ladder_top."
+      }
+    },
+    {
+      "segment_id": "seg-01",
+      "rendition_id": "1080p",
+      "bitrate_kbps": 3500,
+      "priority": 1.7225000000000001,
+      "utility": 1.0,
+      "explanation": {
+        "top_factors": [
+          {
+            "factor": "motion",
+            "contribution": 0.225
+          },
+          {
+            "factor": "saliency",
+            "contribution": 0.2
+          },
+          {
+            "factor": "scene_type",
+            "contribution": 0.2
+          }
+        ],
+        "utility_gain_vs_lower": 0.34514191228993274,
+        "utility_gain_vs_higher": null,
+        "stopping_constraint": "ladder_top",
+        "switch_suppressed": false,
+        "human": "Selected 1080p at priority 1.72; next upgrade gain is 0.000, stopped by ladder_top."
+      }
+    },
+    {
+      "segment_id": "seg-02",
+      "rendition_id": "1080p",
+      "bitrate_kbps": 3500,
+      "priority": 1.7225000000000001,
+      "utility": 1.0,
+      "explanation": {
+        "top_factors": [
+          {
+            "factor": "motion",
+            "contribution": 0.225
+          },
+          {
+            "factor": "saliency",
+            "contribution": 0.2
+          },
+          {
+            "factor": "scene_type",
+            "contribution": 0.2
+          }
+        ],
+        "utility_gain_vs_lower": 0.34514191228993274,
+        "utility_gain_vs_higher": null,
+        "stopping_constraint": "ladder_top",
+        "switch_suppressed": false,
+        "human": "Selected 1080p at priority 1.72; next upgrade gain is 0.000, stopped by ladder_top."
+      }
+    },
+    {
+      "segment_id": "seg-03",
+      "rendition_id": "1080p",
+      "bitrate_kbps": 3500,
+      "priority": 1.7225000000000001,
+      "utility": 1.0,
+      "explanation": {
+        "top_factors": [
+          {
+            "factor": "motion",
+            "contribution": 0.225
+          },
+          {
+            "factor": "saliency",
+            "contribution": 0.2
+          },
+          {
+            "factor": "scene_type",
+            "contribution": 0.2
+          }
+        ],
+        "utility_gain_vs_lower": 0.34514191228993274,
+        "utility_gain_vs_higher": null,
+        "stopping_constraint": "ladder_top",
+        "switch_suppressed": false,
+        "human": "Selected 1080p at priority 1.72; next upgrade gain is 0.000, stopped by ladder_top."
+      }
+    }
+  ],
+  "window_budget_kbit": 92160.0,
+  "used_kbit": 56000,
+  "predicted_min_buffer_s": 15,
+  "constraints_binding": []
+}
