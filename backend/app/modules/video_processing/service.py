@@ -1,10 +1,12 @@
 """Service coordinator for video upload, validation, metadata extraction, and storage."""
 
+import asyncio
 from datetime import datetime, timezone
 from pathlib import Path
 from fastapi import HTTPException, UploadFile, status
 
 from ...config import Settings
+from ...config.settings import resolve_storage_directory
 from .metadata import extract_video_metadata
 from .schemas import VideoUploadResponse
 from .uploader import cleanup_upload, save_upload_file
@@ -14,29 +16,10 @@ from .validator import validate_file_extension, validate_preliminary_mime_type
 def resolve_uploads_directory(storage_dir_str: str) -> Path:
     """Resolve base uploads directory safely across working directories."""
     p = Path(storage_dir_str)
-    resolved_storage: Path
-
-    if p.is_absolute():
-        resolved_storage = p
-    elif (Path.cwd() / p).resolve().exists():
-        resolved_storage = (Path.cwd() / p).resolve()
+    if p.is_absolute() and p.name == "uploads":
+        uploads_dir = p
     else:
-        # Check relative to backend package root
-        backend_dir = Path(__file__).resolve().parent.parent.parent.parent
-        if (backend_dir / p).resolve().exists():
-            resolved_storage = (backend_dir / p).resolve()
-        else:
-            # Check repository root storage
-            repo_storage = (backend_dir.parent / "storage").resolve()
-            if repo_storage.exists():
-                resolved_storage = repo_storage
-            else:
-                resolved_storage = (Path.cwd() / p).resolve()
-
-    uploads_dir = (
-        resolved_storage if resolved_storage.name == "uploads"
-        else resolved_storage / "uploads"
-    )
+        uploads_dir = resolve_storage_directory(storage_dir_str) / "uploads"
     uploads_dir.mkdir(parents=True, exist_ok=True)
     return uploads_dir
 
@@ -76,7 +59,8 @@ class VideoProcessingService:
 
         # 3. Extract technical metadata with FFprobe & validate content
         try:
-            metadata = extract_video_metadata(
+            metadata = await asyncio.to_thread(
+                extract_video_metadata,
                 target_path,
                 custom_ffprobe_path=self.settings.ffprobe_path,
             )

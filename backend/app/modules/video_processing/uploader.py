@@ -58,7 +58,6 @@ async def save_upload_file(
                 total_bytes += len(chunk)
                 if total_bytes > max_bytes:
                     out_file.close()
-                    cleanup_upload(video_dir)
                     raise HTTPException(
                         status_code=413,
                         detail=f"File exceeds maximum allowed upload size of {max_size_mb} MB.",
@@ -67,7 +66,6 @@ async def save_upload_file(
                 out_file.write(chunk)
 
         if total_bytes == 0:
-            cleanup_upload(video_dir)
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Uploaded file is empty (0 bytes).",

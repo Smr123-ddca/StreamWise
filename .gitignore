@@ -60,3 +60,7 @@ storage/processed/*
 .pytest_cache/
 .coverage
 htmlcov/
+
+# Personal planning (not for repo)
+plan.md
+todo.md

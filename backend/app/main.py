@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from .api import video_router
+from .api import analysis_router, video_router
 from .config import get_settings
 
 settings = get_settings()
@@ -28,6 +28,7 @@ app.add_middleware(
 
 # Register API routers
 app.include_router(video_router)
+app.include_router(analysis_router)
 
 
 @app.get("/api/health")

@@ -1,0 +1,73 @@
+{
+  "video_id": "lecture_slides_001",
+  "total_segments": 3,
+  "analysis_version": "0.1.0",
+  "segments": [
+    {
+      "video_id": "lecture_slides_001",
+      "segment_id": "seg_000",
+      "segment_index": 0,
+      "start_time_sec": 0.0,
+      "end_time_sec": 4.0,
+      "duration_sec": 4.0,
+      "analysis": {
+        "visual_complexity": 0.0,
+        "text_density": 0.0,
+        "scene_change_detected": false,
+        "detected_text_sample": "",
+        "word_count": 0,
+        "has_significant_text": false,
+        "importance_score": 0.0,
+        "content_type_hint": "talking_head_or_simple",
+        "ocr_engine": "opencv_text_region"
+      },
+      "frames_analyzed": 3,
+      "analysis_timestamp": "2026-11-25T01:53:18Z",
+      "analyzer_version": "0.1.0"
+    },
+    {
+      "video_id": "lecture_slides_001",
+      "segment_id": "seg_001",
+      "segment_index": 1,
+      "start_time_sec": 4.0,
+      "end_time_sec": 8.0,
+      "duration_sec": 4.0,
+      "analysis": {
+        "visual_complexity": 0.198,
+        "text_density": 0.1486,
+        "scene_change_detected": true,
+        "detected_text_sample": "",
+        "word_count": 0,
+        "has_significant_text": true,
+        "importance_score": 0.4188,
+        "content_type_hint": "presentation_slide",
+        "ocr_engine": "opencv_text_region"
+      },
+      "frames_analyzed": 3,
+      "analysis_timestamp": "2026-11-25T01:53:18Z",
+      "analyzer_version": "0.1.0"
+    },
+    {
+      "video_id": "lecture_slides_001",
+      "segment_id": "seg_002",
+      "segment_index": 2,
+      "start_time_sec": 8.0,
+      "end_time_sec": 12.0,
+      "duration_sec": 4.0,
+      "analysis": {
+        "visual_complexity": 0.1286,
+        "text_density": 0.0944,
+        "scene_change_detected": true,
+        "detected_text_sample": "",
+        "word_count": 0,
+        "has_significant_text": true,
+        "importance_score": 0.3763,
+        "content_type_hint": "presentation_slide",
+        "ocr_engine": "opencv_text_region"
+      },
+      "frames_analyzed": 3,
+      "analysis_timestamp": "2026-11-25T01:53:18Z",
+      "analyzer_version": "0.1.0"
+    }
+  ]
+}
