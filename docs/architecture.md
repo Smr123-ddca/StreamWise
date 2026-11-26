@@ -68,7 +68,8 @@ flowchart TD
 | **Health API** | `backend/app/main.py` | **Implemented** | Application health status (`GET /api/health`). |
 | **Storage Structure** | `storage/` | **Implemented** | Root directory tracking for raw uploads and processed media outputs. |
 | **Video Processing (Upload/Validation/Metadata)** | `backend/app/modules/video_processing/` | **Implemented** | Multipart upload streaming, format/MIME validation, FFprobe metadata extraction, storage layout. |
-| **Video Processing (Transcoding/Segmentation)** | `backend/app/modules/video_processing/` | *Planned* | FFmpeg multi-bitrate ladder transcoding, HLS packaging, manifest authoring. |
+| **Video Processing (Multi-Resolution Transcoding)** | `backend/app/modules/video_processing/` | **Implemented** | FFmpeg multi-resolution transcoding ladder (360p, 480p, 720p), aspect ratio preservation, no upscaling, mod-2 dimension enforcement, output validation. |
+| **Video Processing (HLS Segmentation & Packaging)** | `backend/app/modules/video_processing/` | *Planned* | HLS packaging, segment generation, master and media playlist authoring. |
 | **Content Analysis** | `backend/app/modules/content_analysis/` | *Planned* | Scene detection, motion estimation, spatial/temporal complexity scoring. |
 | **Preferences** | `backend/app/modules/preferences/` | *Planned* | User preference profiles (Data Saver, Quality Priority, Balanced). |
 | **Network Monitor** | `backend/app/modules/network_monitor/` | *Planned* | Telemetry ingestion, bandwidth estimation, throughput smoothing. |
@@ -113,6 +114,60 @@ flowchart TD
 - **Format Validator (`validator.py`)**: Enforces extension allowlist (`.mp4`, `.mov`, `.mkv`, `.webm`) and performs preliminary MIME type filtering.
 - **FFprobe Metadata Extractor (`metadata.py`)**: Safely executes FFprobe via subprocess with argument lists (`shell=False`), timeout safety, and zero shell interpolation. Extracts technical attributes including duration, dimensions, resolution, frame rate, video codec, audio codec, container formats, bitrate, and byte size.
 - **Service Coordinator (`service.py`)**: Orchestrates validation, chunked upload, FFprobe extraction, and builds structured Pydantic response records (`VideoUploadResponse`).
+
+### 3.6 Multi-Resolution Video Transcoding Pipeline (`backend/app/modules/video_processing/`)
+- **API Endpoints**:
+  - `POST /api/videos/{video_id}/transcode`: Synchronously converts uploaded source video into standardized quality renditions without upscaling.
+  - `GET /api/videos/{video_id}/transcode/status`: Retrieves transcoding results, status, and rendition metadata.
+- **Transcoding Pipeline Flow**:
+  ```text
+  Uploaded Source Video
+          |
+          v
+  Transcoding Configuration (CRF ladder, codecs, limits)
+          |
+          v
+  FFmpeg Transcoding Engine (subprocess with timeout & stderr capture)
+          |
+          +----------+----------+
+          |          |          |
+          v          v          v
+        360p       480p       720p
+          |          |          |
+          +----------+----------+
+                     |
+                     v
+             Output Validation (FFprobe verify dimensions, duration drift, codecs)
+                     |
+                     v
+            Transcoding Complete (storage/processed/{video_id}/)
+  ```
+- **Rendition Quality Ladder**:
+  - `360p`: Maximum resolution 640x360, CRF 26, AAC 96 kbps.
+  - `480p`: Maximum resolution 854x480, CRF 24, AAC 128 kbps.
+  - `720p`: Maximum resolution 1280x720, CRF 22, AAC 128 kbps.
+- **Aspect Ratio & Dimension Policy**:
+  - Preserves source aspect ratio across all aspect ratios (16:9, 4:3, 21:9 ultrawide, 9:16 portrait, 1:1 square).
+  - Enforces mod-2 (even) pixel dimensions required by H.264 macroblocks and YUV420p chroma subsampling.
+  - Upscaling prohibition: If a source cannot produce a target rendition without exceeding source dimensions (e.g. 640x360 source producing 720p), the rendition is omitted and the reason is recorded.
+- **FFmpeg Integration**:
+  - Subprocess execution using strict argument lists (`shell=False`).
+  - Video encoder: H.264 (`libx264`) with `yuv420p` pixel format and `+faststart` streaming atom.
+  - Audio encoder: AAC (`aac`) when audio stream is present; audio disabled (`-an`) when source is silent.
+  - Execution timeouts configured via `TRANSCODING_TIMEOUT_SECONDS` (default 120s).
+  - Safe failure cleanup removing incomplete output files and folders.
+  - Original uploaded source file is strictly immutable and preserved.
+- **Output Storage Layout**:
+  ```text
+  storage/processed/{video_id}/
+      360p/
+          video.mp4
+      480p/
+          video.mp4
+      720p/
+          video.mp4
+      transcode_status.json
+  ```
 
 ---
 

@@ -75,13 +75,16 @@ StreamWise/
 │   │   │   ├── __init__.py          # API route exports
 │   │   │   └── video_routes.py      # Video upload & management endpoints
 │   │   ├── modules/
-│   │   │   ├── video_processing/    # Upload streaming, validation, FFprobe metadata
+│   │   │   ├── video_processing/    # Upload, validation, metadata, & multi-resolution transcoding
 │   │   │   │   ├── __init__.py
-│   │   │   │   ├── metadata.py      # FFprobe execution & JSON parsing
-│   │   │   │   ├── schemas.py       # Pydantic schemas (VideoMetadata, VideoUploadResponse)
-│   │   │   │   ├── service.py       # Upload & extraction pipeline coordinator
-│   │   │   │   ├── uploader.py      # Chunked streaming & size enforcement
-│   │   │   │   └── validator.py     # Format & extension validation
+│   │   │   │   ├── metadata.py            # FFprobe execution & JSON parsing
+│   │   │   │   ├── schemas.py             # Pydantic schemas (VideoMetadata, VideoUploadResponse)
+│   │   │   │   ├── service.py             # Upload & transcoding pipeline coordinator
+│   │   │   │   ├── transcoder.py          # FFmpeg multi-resolution transcoding engine
+│   │   │   │   ├── transcoding_config.py  # Centralized encoding & resolution profile ladder
+│   │   │   │   ├── transcoding_schemas.py # Transcoding response & rendition schemas
+│   │   │   │   ├── uploader.py            # Chunked streaming & size enforcement
+│   │   │   │   └── validator.py           # Format & extension validation
 │   │   │   ├── content_analysis/    # Scene detection & complexity (planned)
 │   │   │   ├── preferences/         # User streaming preferences (planned)
 │   │   │   ├── network_monitor/     # Telemetry & bandwidth estimation (planned)
@@ -91,6 +94,7 @@ StreamWise/
 │   │   └── config/                  # Application configuration & settings
 │   ├── tests/                       # Backend test suite (unittest / pytest)
 │   │   ├── test_health.py           # Health check endpoint tests
+│   │   ├── test_transcoder.py       # Multi-resolution transcoding engine tests
 │   │   └── test_video_upload.py     # Video upload, validation & metadata test suite
 │   ├── requirements.txt             # Initial Python dependencies
 │   └── .env.example                 # Environment variable templates
@@ -225,6 +229,120 @@ storage/uploads/{video_id}/source.{extension}
 
 ---
 
+## Multi-Resolution Video Transcoding API
+
+StreamWise transcodes uploaded videos into standardized quality renditions using FFmpeg (H.264 / AAC) with aspect ratio preservation, mod-2 dimension enforcement, and strict upscaling prevention.
+
+### Supported Renditions & Encoding Configuration
+
+Centralized in `backend/app/modules/video_processing/transcoding_config.py`:
+
+| Rendition | Max Resolution | Target Height | Video Codec | Preset | CRF | Pixel Format | Audio Codec | Audio Bitrate | Moov Optimization |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| **360p** | 640x360 | 360 | H.264 (`libx264`) | `fast` | 26 | `yuv420p` | AAC (`aac`) | 96 kbps | `+faststart` |
+| **480p** | 854x480 | 480 | H.264 (`libx264`) | `fast` | 24 | `yuv420p` | AAC (`aac`) | 128 kbps | `+faststart` |
+| **720p** | 1280x720 | 720 | H.264 (`libx264`) | `fast` | 22 | `yuv420p` | AAC (`aac`) | 128 kbps | `+faststart` |
+
+- **Preservation of Aspect Ratio**: Scaled dimensions maintain original source proportions across landscape (16:9, 4:3, 21:9 ultrawide), portrait (9:16), and square (1:1) media.
+- **Even Dimension Policy**: Output dimensions are guaranteed to be even numbers (`mod 2`) to ensure compatibility with H.264 macroblocks and YUV420p chroma subsampling.
+- **No Unnecessary Upscaling**: Renditions requiring scaling beyond the source dimensions are skipped and the omission reason is recorded in the response.
+- **Silent Video Support**: When the source contains no audio stream, transcoding proceeds without attempting audio mapping (`-an`), generating valid audio-free renditions.
+- **Source Immutability**: The original uploaded file in `storage/uploads/` is never modified or overwritten.
+
+### Processed Output Structure
+
+Transcoded videos are stored separately under `storage/processed/`:
+
+```text
+storage/processed/{video_id}/
+├── 360p/
+│   └── video.mp4
+├── 480p/
+│   └── video.mp4
+├── 720p/
+│   └── video.mp4
+└── transcode_status.json
+```
+
+### Endpoints
+
+#### 1. Trigger Transcoding
+`POST /api/videos/{video_id}/transcode`
+
+Executes the transcoding pipeline for the specified video ID.
+
+**Example Request:**
+```bash
+curl -X POST "http://127.0.0.1:8000/api/videos/9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d/transcode"
+```
+
+**Example Response (200 OK):**
+```json
+{
+  "video_id": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d",
+  "status": "completed",
+  "overall_status": "completed",
+  "successful_renditions": [
+    {
+      "rendition": "360p",
+      "width": 640,
+      "height": 360,
+      "resolution": "640x360",
+      "file_path": "storage/processed/9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d/360p/video.mp4",
+      "file_size": 184512,
+      "duration": 1.0,
+      "video_codec": "h264",
+      "audio_codec": "aac",
+      "bitrate": 1476096
+    },
+    {
+      "rendition": "480p",
+      "width": 854,
+      "height": 480,
+      "resolution": "854x480",
+      "file_path": "storage/processed/9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d/480p/video.mp4",
+      "file_size": 312480,
+      "duration": 1.0,
+      "video_codec": "h264",
+      "audio_codec": "aac",
+      "bitrate": 2499840
+    },
+    {
+      "rendition": "720p",
+      "width": 1280,
+      "height": 720,
+      "resolution": "1280x720",
+      "file_path": "storage/processed/9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d/720p/video.mp4",
+      "file_size": 524108,
+      "duration": 1.0,
+      "video_codec": "h264",
+      "audio_codec": "aac",
+      "bitrate": 4192864
+    }
+  ],
+  "skipped_renditions": [],
+  "failed_renditions": [],
+  "processing_duration": 1.842
+}
+```
+
+#### 2. Get Transcoding Status
+`GET /api/videos/{video_id}/transcode/status`
+
+Retrieves the current transcoding state and rendition details for a video ID.
+
+**Example Request:**
+```bash
+curl "http://127.0.0.1:8000/api/videos/9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d/transcode/status"
+```
+
+### Error Responses
+- **404 Not Found**: Source video does not exist or transcoding has not been initiated for this video ID.
+- **422 Unprocessable Content**: Corrupted source file or media parsing failure.
+- **503 Service Unavailable**: FFmpeg or FFprobe binaries are missing or unreachable on the system PATH.
+
+---
+
 ## Health Diagnostic Endpoint
 
 ```bash
@@ -248,8 +366,17 @@ Interactive OpenAPI documentation:
 
 ## Running Automated Tests
 
-Run the automated test suite from the repository root:
-
+Run the automated test suite using `unittest`:
 ```bash
 python -m unittest discover -s backend/tests -v
+```
+
+Or using `pytest`:
+```bash
+pytest backend/tests -v
+```
+
+To run only the multi-resolution transcoding test suite:
+```bash
+python -m unittest backend/tests/test_transcoder.py -v
 ```

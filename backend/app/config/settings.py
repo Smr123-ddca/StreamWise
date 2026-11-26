@@ -13,6 +13,8 @@ class Settings(BaseSettings):
     max_upload_size_mb: int = 500
     frontend_url: str = "http://localhost:5173"
     ffprobe_path: Optional[str] = None
+    ffmpeg_path: Optional[str] = None
+    transcoding_timeout_seconds: int = 120
 
     model_config = SettingsConfigDict(
         env_file=".env",
