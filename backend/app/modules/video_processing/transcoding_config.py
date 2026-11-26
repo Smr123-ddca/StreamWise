@@ -101,6 +101,7 @@ class TranscodingConfig:
     preset: str = "fast"
     pixel_format: str = "yuv420p"
     ffmpeg_timeout: int = 120
+    threads: Optional[int] = None
     rendition_profiles: List[RenditionProfile] = field(
         default_factory=lambda: list(DEFAULT_RENDITION_PROFILES)
     )

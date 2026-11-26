@@ -1,5 +1,7 @@
-from fastapi import FastAPI
+from pathlib import Path
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
 
 from .api import video_router
 from .config import get_settings
@@ -12,7 +14,7 @@ app = FastAPI(
     debug=settings.debug,
 )
 
-# Basic CORS configuration for local frontend development
+# CORS configuration for local frontend development and HLS browser playback
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -20,14 +22,34 @@ app.add_middleware(
         "http://localhost:5173",
         "http://127.0.0.1:5173",
         "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://localhost:8000",
+        "http://127.0.0.1:8000",
     ],
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "HEAD", "OPTIONS"],
     allow_headers=["*"],
+    expose_headers=[
+        "Content-Length",
+        "Content-Range",
+        "Accept-Ranges",
+        "ETag",
+        "Last-Modified",
+        "Content-Type",
+    ],
 )
 
 # Register API routers
 app.include_router(video_router)
+
+
+@app.get("/player", response_class=HTMLResponse, include_in_schema=False)
+def serve_playback_page() -> HTMLResponse:
+    """Serve the minimal HLS playback verification page."""
+    player_path = Path(__file__).resolve().parent.parent.parent / "frontend" / "player.html"
+    if not player_path.exists() or not player_path.is_file():
+        raise HTTPException(status_code=404, detail="Playback verification page not found.")
+    return HTMLResponse(content=player_path.read_text(encoding="utf-8"))
 
 
 @app.get("/api/health")

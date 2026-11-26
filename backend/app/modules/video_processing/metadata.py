@@ -13,11 +13,19 @@ from .schemas import VideoMetadata
 
 def get_ffprobe_executable(custom_path: Optional[str] = None) -> str:
     """Locate the ffprobe executable from settings, environment, or system PATH."""
-    path = custom_path or os.getenv("FFPROBE_PATH")
-    if path and (os.path.isabs(path) and os.path.exists(path)):
-        return path
+    explicit_path = custom_path or os.getenv("FFPROBE_PATH")
+    if explicit_path:
+        if os.path.isabs(explicit_path) and os.path.exists(explicit_path):
+            return explicit_path
+        resolved_explicit = shutil.which(explicit_path)
+        if resolved_explicit:
+            return resolved_explicit
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Configured FFprobe executable '{explicit_path}' was not found.",
+        )
 
-    resolved = shutil.which(path or "ffprobe")
+    resolved = shutil.which("ffprobe")
     if resolved:
         return resolved
 
@@ -84,9 +92,12 @@ def extract_video_metadata(
     try:
         result = subprocess.run(
             cmd,
+            stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=timeout_seconds,
             shell=False,
             check=False,

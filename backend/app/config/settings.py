@@ -15,6 +15,8 @@ class Settings(BaseSettings):
     ffprobe_path: Optional[str] = None
     ffmpeg_path: Optional[str] = None
     transcoding_timeout_seconds: int = 120
+    hls_segment_duration_seconds: int = 4
+    hls_timeout_seconds: int = 180
 
     model_config = SettingsConfigDict(
         env_file=".env",

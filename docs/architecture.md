@@ -69,14 +69,14 @@ flowchart TD
 | **Storage Structure** | `storage/` | **Implemented** | Root directory tracking for raw uploads and processed media outputs. |
 | **Video Processing (Upload/Validation/Metadata)** | `backend/app/modules/video_processing/` | **Implemented** | Multipart upload streaming, format/MIME validation, FFprobe metadata extraction, storage layout. |
 | **Video Processing (Multi-Resolution Transcoding)** | `backend/app/modules/video_processing/` | **Implemented** | FFmpeg multi-resolution transcoding ladder (360p, 480p, 720p), aspect ratio preservation, no upscaling, mod-2 dimension enforcement, output validation. |
-| **Video Processing (HLS Segmentation & Packaging)** | `backend/app/modules/video_processing/` | *Planned* | HLS packaging, segment generation, master and media playlist authoring. |
+| **Video Processing (HLS Segmentation & Packaging)** | `backend/app/modules/video_processing/` | **Implemented** | Keyframe-aligned MPEG-TS HLS segmentation (`4s`), media playlists, `master.m3u8` authoring, segment/PTS validation, atomic directory promotion. |
 | **Content Analysis** | `backend/app/modules/content_analysis/` | *Planned* | Scene detection, motion estimation, spatial/temporal complexity scoring. |
 | **Preferences** | `backend/app/modules/preferences/` | *Planned* | User preference profiles (Data Saver, Quality Priority, Balanced). |
 | **Network Monitor** | `backend/app/modules/network_monitor/` | *Planned* | Telemetry ingestion, bandwidth estimation, throughput smoothing. |
 | **Decision Engine** | `backend/app/modules/decision_engine/` | *Planned* | Segment-level quality allocation and dynamic manifest delivery. |
 | **Database** | `backend/app/database/` | *Planned* | PostgreSQL schema, migrations, video/segment metadata persistence. |
-| **Storage Service** | `backend/app/storage/` | *Planned* | Abstraction layer for file access, upload chunking, and retention. |
-| **Frontend** | `frontend/` | *Planned* | React/Vite dashboard, Shaka Player client, live telemetry visualization. |
+| **Storage Service** | `backend/app/storage/` | **Implemented** | Scoped HLS media delivery resolver (`MediaDeliveryStorage`), playlist URI/symlink validation, HTTP byte-range (`206`/`416`) streaming. |
+| **Playback Verification Page** | `frontend/player.html` | **Implemented (Minimal)** | Minimal `hls.js` (CDN) + native HLS playback verification UI served at `GET /player`. |
 
 ---
 
@@ -151,12 +151,18 @@ flowchart TD
   - Enforces mod-2 (even) pixel dimensions required by H.264 macroblocks and YUV420p chroma subsampling.
   - Upscaling prohibition: If a source cannot produce a target rendition without exceeding source dimensions (e.g. 640x360 source producing 720p), the rendition is omitted and the reason is recorded.
 - **FFmpeg Integration**:
-  - Subprocess execution using strict argument lists (`shell=False`).
-  - Video encoder: H.264 (`libx264`) with `yuv420p` pixel format and `+faststart` streaming atom.
+  - Subprocess execution using strict argument lists (`shell=False`, `stdin=subprocess.DEVNULL`, UTF-8 decoding with replacement, and `-nostdin`).
+  - Explicit primary stream selection (`-map 0:v:0`, `-map 0:a:0` when audio exists, `-sn -dn` to ignore subtitle/data streams).
+  - Video encoder: H.264 (`libx264`) with `yuv420p` pixel format, `setsar=1`, and `+faststart` streaming atom.
   - Audio encoder: AAC (`aac`) when audio stream is present; audio disabled (`-an`) when source is silent.
   - Execution timeouts configured via `TRANSCODING_TIMEOUT_SECONDS` (default 120s).
-  - Safe failure cleanup removing incomplete output files and folders.
+  - Atomic staging (`video.tmp.mp4` -> `video.mp4`) and safe failure cleanup removing incomplete/stale output files and folders.
+  - Concurrency & Idempotency: Strict UUID validation prevents path traversal; in-process per-video locking rejects concurrent duplicate transcodes with `409 Conflict` while `GET /status` reports `"processing"`; completed jobs return idempotently unless `?force=true` is passed.
   - Original uploaded source file is strictly immutable and preserved.
+- **Architectural Readiness Notes (Pre-HLS)**:
+  - *Keyframe / GOP Alignment*: Currently uses default variable GOP; fixed aligned keyframes (`-g`, `-keyint_min`, `-sc_threshold 0`) across renditions should be introduced when implementing HLS segmentation for clean ABR switching.
+  - *Async Job Queue*: Synchronous HTTP transcoding works for short test clips; background task execution (`202 Accepted`) will be needed for production multi-minute videos.
+  - *Storage & Path Abstraction*: Future `backend/app/storage/` should replace host-absolute `file_path` strings in API responses with storage-relative keys or media URLs.
 - **Output Storage Layout**:
   ```text
   storage/processed/{video_id}/
@@ -168,6 +174,59 @@ flowchart TD
           video.mp4
       transcode_status.json
   ```
+
+### 3.7 HLS Packaging Pipeline (`backend/app/modules/video_processing/`)
+- **Modules**: [`hls_config.py`](file:///c:/Users/HP/OneDrive/Documents/GitHub/StreamWise/backend/app/modules/video_processing/hls_config.py), [`hls_schemas.py`](file:///c:/Users/HP/OneDrive/Documents/GitHub/StreamWise/backend/app/modules/video_processing/hls_schemas.py), [`hls_packager.py`](file:///c:/Users/HP/OneDrive/Documents/GitHub/StreamWise/backend/app/modules/video_processing/hls_packager.py).
+- **API Endpoints**:
+  - `POST /api/videos/{video_id}/hls` (optional `?force=true`): Packages available transcoded MP4 renditions into synchronized MPEG-TS HLS playlists and `master.m3u8`.
+  - `GET /api/videos/{video_id}/hls/status`: Retrieves HLS status (`processing`, `completed`, `partial`, `failed`) and validated segment metadata.
+- **Synchronized Keyframe & Segment Alignment**:
+  - Parses actual MP4 frame rates (including fractional rates such as `24000/1001` and `30000/1001`) and computes `gop_frames = ceil(fps * segment_duration)`.
+  - Enforces closed GOPs and exact 4-second boundaries via `-g {gop_frames} -keyint_min {gop_frames} -sc_threshold 0 -x264-params scenecut=0:open-gop=0 -force_key_frames "expr:gte(t,n_forced*{segment_duration})"`.
+  - Uses MPEG-TS segments (`-hls_segment_type mpegts`, `-hls_playlist_type vod`, `-hls_flags independent_segments`).
+- **Validation & Atomic Staging**:
+  - Every generated `.ts` segment is probed with FFprobe to verify H.264 video, AAC audio parity, dimensions, non-empty size, and that the first coded frame is a valid keyframe (`key_frame == 1`).
+  - Cross-rendition alignment verifies matching segment counts, `#EXTINF` durations, and start PTS timestamps within 2-frame tolerance (`max(0.08, 2 / min_fps)`).
+  - Stages all outputs inside `.hls_staging_{id}/` and performs a Windows-safe atomic directory swap (`hls -> .hls_backup_{id}`, `.hls_staging_{id} -> hls`) with automatic rollback, preserving any previously valid HLS directory if a forced re-run fails completely.
+- **HLS Output Layout**:
+  ```text
+  storage/processed/{video_id}/hls/
+      hls_status.json
+      master.m3u8
+      360p/
+          playlist.m3u8
+          segment_000.ts
+          ...
+      480p/
+          playlist.m3u8
+          ...
+      720p/
+          playlist.m3u8
+          ...
+  ```
+- **Known Limitations (Current Synchronous Phase)**:
+  - Synchronous HTTP execution means large multi-minute videos require increased `HLS_TIMEOUT_SECONDS` until background workers are added.
+  - No database persistence or automated segment retention/cleanup policies exist yet.
+
+### 3.8 HLS Video Delivery & Playback (`backend/app/storage/media_storage.py`, `frontend/player.html`)
+- **Scoped Delivery Endpoints (`GET` & `HEAD`)**:
+  - `GET /api/videos/{video_id}/hls/master.m3u8` (`application/vnd.apple.mpegurl`, `Cache-Control: no-cache, must-revalidate`)
+  - `GET /api/videos/{video_id}/hls/{rendition}/playlist.m3u8` (`application/vnd.apple.mpegurl`, `Cache-Control: no-cache, must-revalidate`)
+  - `GET /api/videos/{video_id}/hls/{rendition}/{segment_name}` (`video/mp2t`, `Cache-Control: public, max-age=3600`)
+  - `GET /player`: Serves the minimal playback verification page ([`player.html`](file:///c:/Users/HP/OneDrive/Documents/GitHub/StreamWise/frontend/player.html)) without mounting `StaticFiles`.
+- **Security & Playlist Validation**:
+  - No unrestricted directory serving (`StaticFiles` is not used).
+  - Enforces UUID `video_id`, strict regex allowlists on `{rendition}` and `{segment_name}` (`*.ts` only), canonical `is_relative_to(hls_root)` containment, and symlink rejection (`403 Forbidden`).
+  - Raw uploads (`storage/uploads/`), MP4 renditions, status JSON files, and hidden `.hls_staging_*`/`.hls_backup_*` directories are strictly blocked from HTTP media delivery.
+  - Validates `master.m3u8` and rendition `playlist.m3u8` contents before serving, rejecting absolute paths, URI schemes (`http://`, `file://`), and traversal (`..`) with `422 Unprocessable Content`.
+- **HTTP Range & Caching Behavior**:
+  - Implements streaming chunked byte-range support (`Accept-Ranges: bytes`, `206 Partial Content`, `416 Range Not Satisfiable`) alongside `ETag`, `Last-Modified`, `Content-Length`, and `X-Content-Type-Options: nosniff`.
+  - CORS middleware exposes `Content-Length`, `Content-Range`, `Accept-Ranges`, `ETag`, `Last-Modified`, and `Content-Type` to local frontend origins.
+- **Storage-Relative Identifiers**:
+  - Transcoding and HLS status responses expose storage-relative paths (e.g. `{video_id}/hls/master.m3u8`) and HTTP URLs (`master_playlist_url`, `playlist_url`) instead of host filesystem paths.
+- **Browser Playback Verification (`frontend/player.html`)**:
+  - Uses `hls.js` (`v1.5.15` via jsDelivr CDN) when MSE is supported and falls back to native browser HLS (`application/vnd.apple.mpegurl`) on Safari/iOS.
+  - Supports Video ID loading, Auto & manual rendition switching, buffered/time telemetry, and fatal network/media error recovery.
 
 ---
 

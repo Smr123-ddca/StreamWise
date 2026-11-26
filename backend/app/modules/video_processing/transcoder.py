@@ -35,11 +35,19 @@ def get_ffmpeg_executable(custom_path: Optional[str] = None) -> str:
     Raises:
         HTTPException(503): If ffmpeg is not found on the system.
     """
-    path = custom_path or os.getenv("FFMPEG_PATH")
-    if path and (os.path.isabs(path) and os.path.exists(path)):
-        return path
+    explicit_path = custom_path or os.getenv("FFMPEG_PATH")
+    if explicit_path:
+        if os.path.isabs(explicit_path) and os.path.exists(explicit_path):
+            return explicit_path
+        resolved_explicit = shutil.which(explicit_path)
+        if resolved_explicit:
+            return resolved_explicit
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Configured FFmpeg executable '{explicit_path}' was not found.",
+        )
 
-    resolved = shutil.which(path or "ffmpeg")
+    resolved = shutil.which("ffmpeg")
     if resolved:
         return resolved
 
@@ -101,14 +109,19 @@ def build_ffmpeg_command(
     """
     cmd = [
         ffmpeg_bin,
+        "-nostdin",
         "-v", "error",
         "-i", str(source_path.resolve()),
-        "-vf", f"scale={target_width}:{target_height}",
+        "-map", "0:v:0",
+        "-vf", f"scale={target_width}:{target_height},setsar=1",
         "-c:v", config.video_codec,
         "-preset", config.preset,
         "-crf", str(profile.crf),
         "-pix_fmt", config.pixel_format,
     ]
+
+    if config.threads is not None and config.threads > 0:
+        cmd.extend(["-threads", str(config.threads)])
 
     if profile.video_bitrate_max:
         cmd.extend(["-maxrate", profile.video_bitrate_max])
@@ -116,12 +129,14 @@ def build_ffmpeg_command(
         cmd.extend(["-bufsize", profile.bufsize])
 
     if source_has_audio:
-        cmd.extend(["-c:a", config.audio_codec, "-b:a", profile.audio_bitrate])
+        cmd.extend(["-map", "0:a:0", "-c:a", config.audio_codec, "-b:a", profile.audio_bitrate])
     else:
         cmd.extend(["-an"])
 
-    # Faststart places the moov atom at the front of the file for streaming playback
+    # Drop subtitle/data streams and place moov atom at front for streaming playback
     cmd.extend([
+        "-sn",
+        "-dn",
         "-movflags", "+faststart",
         str(output_path.resolve()),
         "-y",
@@ -135,9 +150,16 @@ class VideoTranscoder:
     def __init__(self, config: Optional[TranscodingConfig] = None) -> None:
         self.config = config or TranscodingConfig()
 
-    def cleanup_failed_rendition(self, rendition_dir: Path, output_file: Path) -> None:
-        """Safely remove partially generated output files and empty rendition directories."""
+    def cleanup_failed_rendition(
+        self,
+        rendition_dir: Path,
+        output_file: Path,
+        temp_file: Optional[Path] = None,
+    ) -> None:
+        """Safely remove staging/failed output files and empty rendition directories."""
         try:
+            if temp_file is not None and temp_file.exists():
+                temp_file.unlink(missing_ok=True)
             if output_file.exists():
                 output_file.unlink(missing_ok=True)
             if rendition_dir.exists() and not any(rendition_dir.iterdir()):
@@ -160,7 +182,7 @@ class VideoTranscoder:
         3. FFprobe parses the media file without errors.
         4. Video dimensions match expected target width and height.
         5. Video codec matches H.264.
-        6. Duration is approximately consistent with source duration.
+        6. Duration is non-zero (if source > 0) and approximately consistent with source.
         7. Audio stream presence matches source audio presence.
 
         Args:
@@ -197,9 +219,11 @@ class VideoTranscoder:
         if "h264" not in codec_lower and "avc" not in codec_lower:
             raise ValueError(f"Output video codec '{out_meta.video_codec}' does not match expected H.264.")
 
-        # Duration verification (allow small timestamp container drift up to 1.5s or 10%)
+        # Duration verification (reject zero-duration outputs and excessive drift)
         if source_metadata.duration > 0:
-            allowed_drift = max(1.5, source_metadata.duration * 0.1)
+            if out_meta.duration <= 0:
+                raise ValueError("Transcoded output has invalid zero duration.")
+            allowed_drift = max(0.5, source_metadata.duration * 0.15)
             duration_diff = abs(out_meta.duration - source_metadata.duration)
             if duration_diff > allowed_drift:
                 raise ValueError(
@@ -235,10 +259,19 @@ class VideoTranscoder:
             TranscodingResponse containing detailed results for all renditions.
 
         Raises:
+            HTTPException(400): If video_id resolves outside output_base_dir.
             HTTPException(422): If source file is missing, empty, or unparseable.
             HTTPException(503): If FFmpeg or FFprobe are not available.
         """
         start_time = time.perf_counter()
+
+        base_resolved = output_base_dir.resolve()
+        video_output_dir = (output_base_dir / video_id).resolve()
+        if not video_output_dir.is_relative_to(base_resolved) or video_output_dir == base_resolved:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid video ID path.",
+            )
 
         if not source_path.exists() or source_path.stat().st_size == 0:
             raise HTTPException(
@@ -279,14 +312,15 @@ class VideoTranscoder:
                 continue
 
             target_w, target_h = dims
-            rendition_dir = output_base_dir / video_id / profile.name
+            rendition_dir = video_output_dir / profile.name
             rendition_dir.mkdir(parents=True, exist_ok=True)
+            temp_file = rendition_dir / "video.tmp.mp4"
             output_file = rendition_dir / "video.mp4"
 
             cmd = build_ffmpeg_command(
                 ffmpeg_bin=ffmpeg_bin,
                 source_path=source_path,
-                output_path=output_file,
+                output_path=temp_file,
                 target_width=target_w,
                 target_height=target_h,
                 profile=profile,
@@ -294,28 +328,35 @@ class VideoTranscoder:
                 source_has_audio=source_has_audio,
             )
 
-            # 4. Execute FFmpeg process
+            # 4. Execute FFmpeg process into staging file
             try:
                 proc = subprocess.run(
                     cmd,
+                    stdin=subprocess.DEVNULL,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
                     text=True,
+                    encoding="utf-8",
+                    errors="replace",
                     timeout=self.config.ffmpeg_timeout,
                     shell=False,
                     check=False,
                 )
-            except subprocess.TimeoutExpired:
-                self.cleanup_failed_rendition(rendition_dir, output_file)
+            except subprocess.TimeoutExpired as exc:
+                self.cleanup_failed_rendition(rendition_dir, output_file, temp_file)
+                stderr_tail = ""
+                if exc.stderr:
+                    decoded = exc.stderr.decode("utf-8", errors="replace") if isinstance(exc.stderr, bytes) else exc.stderr
+                    stderr_tail = f" Details: {decoded.strip()[-300:]}" if decoded.strip() else ""
                 failed_renditions.append(
                     FailedRenditionInfo(
                         rendition=profile.name,
-                        error=f"FFmpeg transcoding timed out after {self.config.ffmpeg_timeout} seconds.",
+                        error=f"FFmpeg transcoding timed out after {self.config.ffmpeg_timeout} seconds.{stderr_tail}",
                     )
                 )
                 continue
             except Exception as exc:
-                self.cleanup_failed_rendition(rendition_dir, output_file)
+                self.cleanup_failed_rendition(rendition_dir, output_file, temp_file)
                 failed_renditions.append(
                     FailedRenditionInfo(
                         rendition=profile.name,
@@ -325,7 +366,7 @@ class VideoTranscoder:
                 continue
 
             if proc.returncode != 0:
-                self.cleanup_failed_rendition(rendition_dir, output_file)
+                self.cleanup_failed_rendition(rendition_dir, output_file, temp_file)
                 err_msg = proc.stderr.strip() if proc.stderr else f"Exit code {proc.returncode}"
                 failed_renditions.append(
                     FailedRenditionInfo(
@@ -335,16 +376,17 @@ class VideoTranscoder:
                 )
                 continue
 
-            # 5. Validate generated output
+            # 5. Validate staged output before atomic promotion
             try:
                 out_meta = self.validate_transcoded_output(
-                    output_path=output_file,
+                    output_path=temp_file,
                     expected_width=target_w,
                     expected_height=target_h,
                     source_metadata=source_metadata,
                 )
+                os.replace(temp_file, output_file)
             except Exception as val_exc:
-                self.cleanup_failed_rendition(rendition_dir, output_file)
+                self.cleanup_failed_rendition(rendition_dir, output_file, temp_file)
                 failed_renditions.append(
                     FailedRenditionInfo(
                         rendition=profile.name,
@@ -359,7 +401,7 @@ class VideoTranscoder:
                     width=out_meta.width,
                     height=out_meta.height,
                     resolution=out_meta.resolution,
-                    file_path=str(output_file),
+                    file_path=f"{video_id}/{profile.name}/video.mp4",
                     file_size=out_meta.file_size,
                     duration=out_meta.duration,
                     video_codec=out_meta.video_codec,
