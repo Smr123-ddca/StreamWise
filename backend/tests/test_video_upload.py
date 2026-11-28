@@ -282,6 +282,28 @@ class VideoUploadTestCase(unittest.TestCase):
         self.assertTrue(file2.exists())
         self.assertNotEqual(str(file1), str(file2))
 
+    def test_11_empty_storage_dir_and_non_numeric_dimensions_rejected(self):
+        """11. Verify empty storage_dir raises ValueError and invalid dimensions return HTTP 422."""
+        from backend.app.config.settings import resolve_storage_directory
+
+        with self.assertRaises(ValueError):
+            resolve_storage_directory("   ")
+
+        sample_path = self.temp_path / "bad_dims.mp4"
+        sample_path.write_bytes(b"placeholder")
+        fake_ffprobe_json = json.dumps({
+            "format": {"format_name": "mp4", "duration": "1.0"},
+            "streams": [{"codec_type": "video", "codec_name": "h264", "width": "bad", "height": "240"}],
+        })
+        fake_proc = subprocess.CompletedProcess(args=["ffprobe"], returncode=0, stdout=fake_ffprobe_json, stderr="")
+        with (
+            patch("backend.app.modules.video_processing.metadata.get_ffprobe_executable", return_value="ffprobe"),
+            patch("backend.app.modules.video_processing.metadata.subprocess.run", return_value=fake_proc),
+        ):
+            with self.assertRaises(HTTPException) as ctx:
+                extract_video_metadata(sample_path)
+            self.assertEqual(ctx.exception.status_code, 422)
+
 
 if __name__ == "__main__":
     unittest.main()

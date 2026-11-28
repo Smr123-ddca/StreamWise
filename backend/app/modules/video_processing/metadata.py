@@ -15,8 +15,8 @@ def get_ffprobe_executable(custom_path: Optional[str] = None) -> str:
     """Locate the ffprobe executable from settings, environment, or system PATH."""
     explicit_path = custom_path or os.getenv("FFPROBE_PATH")
     if explicit_path:
-        if os.path.isabs(explicit_path) and os.path.exists(explicit_path):
-            return explicit_path
+        if os.path.isfile(explicit_path):
+            return str(Path(explicit_path).resolve())
         resolved_explicit = shutil.which(explicit_path)
         if resolved_explicit:
             return resolved_explicit
@@ -38,14 +38,15 @@ def get_ffprobe_executable(custom_path: Optional[str] = None) -> str:
         Path("C:\\ffmpeg\\bin\\ffprobe.exe"),
     ]
     for candidate in common_candidates:
-        if candidate.exists():
+        if candidate.is_file():
             return str(candidate)
 
     # Search WinGet packages directory for any ffmpeg/ffprobe installation
     winget_pkg_dir = Path(local_app_data) / "Microsoft" / "WinGet" / "Packages"
-    if winget_pkg_dir.exists():
+    if winget_pkg_dir.is_dir():
         for found in winget_pkg_dir.glob("**/ffprobe.exe"):
-            return str(found)
+            if found.is_file():
+                return str(found)
 
     raise HTTPException(
         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -102,7 +103,7 @@ def extract_video_metadata(
             shell=False,
             check=False,
         )
-    except FileNotFoundError:
+    except OSError:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="FFprobe executable could not be executed.",
@@ -147,9 +148,15 @@ def extract_video_metadata(
             detail="The uploaded media file does not contain a valid video stream.",
         )
 
-    width = video_stream.get("width")
-    height = video_stream.get("height")
-    if not width or not height or width <= 0 or height <= 0:
+    try:
+        width = int(video_stream.get("width"))
+        height = int(video_stream.get("height"))
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=422,
+            detail="Video stream dimensions are invalid or missing.",
+        ) from exc
+    if width <= 0 or height <= 0:
         raise HTTPException(
             status_code=422,
             detail="Video stream dimensions are invalid or missing.",

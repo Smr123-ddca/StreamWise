@@ -3,7 +3,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 
-from .api import video_router
+from .api import analysis_router, video_router
 from .config import get_settings
 
 settings = get_settings()
@@ -41,6 +41,7 @@ app.add_middleware(
 
 # Register API routers
 app.include_router(video_router)
+app.include_router(analysis_router)
 
 
 @app.get("/player", response_class=HTMLResponse, include_in_schema=False)

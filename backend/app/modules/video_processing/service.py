@@ -1,5 +1,6 @@
 """Service coordinator for video upload, validation, metadata extraction, and storage."""
 
+import asyncio
 import os
 import threading
 import time
@@ -8,9 +9,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, Optional, Tuple
 from fastapi import HTTPException, UploadFile, status
-from starlette.concurrency import run_in_threadpool
 
 from ...config import Settings
+from ...config.settings import resolve_storage_directory
 from .hls_config import HLSConfig
 from .hls_packager import HLSPackager
 from .hls_schemas import HLSResponse
@@ -41,28 +42,14 @@ def validate_video_id(video_id: str) -> str:
 
 
 def _resolve_storage_subdir(storage_dir_str: str, subdir: str) -> Path:
-    """Resolve uploads or processed storage subdirectory safely across working directories."""
-    p = Path(storage_dir_str)
-    resolved_storage: Path
-
-    if p.is_absolute():
-        resolved_storage = p
-    elif (Path.cwd() / p).resolve().exists():
-        resolved_storage = (Path.cwd() / p).resolve()
+    """Resolve uploads or processed storage subdirectory via shared storage resolver."""
+    if not storage_dir_str or not storage_dir_str.strip():
+        raise ValueError("storage_dir cannot be empty.")
+    p = Path(storage_dir_str.strip())
+    if p.is_absolute() and p.name == subdir:
+        target_dir = p
     else:
-        backend_dir = Path(__file__).resolve().parent.parent.parent.parent
-        if (backend_dir / p).resolve().exists():
-            resolved_storage = (backend_dir / p).resolve()
-        elif storage_dir_str == "../storage":
-            repo_storage = (backend_dir.parent / "storage").resolve()
-            resolved_storage = repo_storage if repo_storage.exists() else (Path.cwd() / p).resolve()
-        else:
-            resolved_storage = (Path.cwd() / p).resolve()
-
-    target_dir = (
-        resolved_storage if resolved_storage.name == subdir
-        else resolved_storage / subdir
-    )
+        target_dir = resolve_storage_directory(storage_dir_str) / subdir
     target_dir.mkdir(parents=True, exist_ok=True)
     return target_dir
 
@@ -232,7 +219,7 @@ class VideoProcessingService:
         video_dir = target_path.parent
 
         try:
-            metadata = await run_in_threadpool(
+            metadata = await asyncio.to_thread(
                 extract_video_metadata,
                 target_path,
                 custom_ffprobe_path=self.settings.ffprobe_path,
