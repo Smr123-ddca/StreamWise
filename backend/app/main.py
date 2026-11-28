@@ -3,7 +3,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 
-from .api import analysis_router, video_router
+from .api import analysis_router, integration_router, video_router
 from .config import get_settings
 from .modules.decision_engine.api import router as decision_router
 
@@ -42,6 +42,7 @@ app.add_middleware(
 
 # Register API routers
 app.include_router(video_router)
+app.include_router(integration_router)
 app.include_router(decision_router)
 app.include_router(analysis_router)
 
