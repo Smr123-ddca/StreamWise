@@ -1,4 +1,7 @@
-"""Intelligent decision engine for segment-level quality and bitrate selection.
+"""Content-aware, deterministic segment rendition decisions."""
 
-Reserved for future module implementation.
-"""
+from .allocator import allocate
+from .models import DecisionRequest, DecisionResponse
+from .service import DecisionService
+
+__all__ = ["DecisionRequest", "DecisionResponse", "DecisionService", "allocate"]

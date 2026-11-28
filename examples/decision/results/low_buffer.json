@@ -1,0 +1,120 @@
+{
+  "decisions": [
+    {
+      "segment_id": "seg-00",
+      "rendition_id": "360p",
+      "bitrate_kbps": 600,
+      "priority": 1.7225000000000001,
+      "utility": 0.30738450144429136,
+      "explanation": {
+        "top_factors": [
+          {
+            "factor": "motion",
+            "contribution": 0.225
+          },
+          {
+            "factor": "saliency",
+            "contribution": 0.2
+          },
+          {
+            "factor": "scene_type",
+            "contribution": 0.2
+          }
+        ],
+        "utility_gain_vs_lower": 0.0,
+        "utility_gain_vs_higher": 0.3474735862657759,
+        "stopping_constraint": "buffer",
+        "switch_suppressed": false,
+        "human": "Selected 360p at priority 1.72; next upgrade gain is 0.347, stopped by buffer."
+      }
+    },
+    {
+      "segment_id": "seg-01",
+      "rendition_id": "720p",
+      "bitrate_kbps": 1800,
+      "priority": 1.7225000000000001,
+      "utility": 0.6548580877100673,
+      "explanation": {
+        "top_factors": [
+          {
+            "factor": "motion",
+            "contribution": 0.225
+          },
+          {
+            "factor": "saliency",
+            "contribution": 0.2
+          },
+          {
+            "factor": "scene_type",
+            "contribution": 0.2
+          }
+        ],
+        "utility_gain_vs_lower": 0.3474735862657759,
+        "utility_gain_vs_higher": 0.34514191228993274,
+        "stopping_constraint": "buffer",
+        "switch_suppressed": false,
+        "human": "Selected 720p at priority 1.72; next upgrade gain is 0.345, stopped by buffer."
+      }
+    },
+    {
+      "segment_id": "seg-02",
+      "rendition_id": "720p",
+      "bitrate_kbps": 1800,
+      "priority": 1.7225000000000001,
+      "utility": 0.6548580877100673,
+      "explanation": {
+        "top_factors": [
+          {
+            "factor": "motion",
+            "contribution": 0.225
+          },
+          {
+            "factor": "saliency",
+            "contribution": 0.2
+          },
+          {
+            "factor": "scene_type",
+            "contribution": 0.2
+          }
+        ],
+        "utility_gain_vs_lower": 0.3474735862657759,
+        "utility_gain_vs_higher": 0.34514191228993274,
+        "stopping_constraint": "buffer",
+        "switch_suppressed": false,
+        "human": "Selected 720p at priority 1.72; next upgrade gain is 0.345, stopped by buffer."
+      }
+    },
+    {
+      "segment_id": "seg-03",
+      "rendition_id": "360p",
+      "bitrate_kbps": 600,
+      "priority": 1.7225000000000001,
+      "utility": 0.30738450144429136,
+      "explanation": {
+        "top_factors": [
+          {
+            "factor": "motion",
+            "contribution": 0.225
+          },
+          {
+            "factor": "saliency",
+            "contribution": 0.2
+          },
+          {
+            "factor": "scene_type",
+            "contribution": 0.2
+          }
+        ],
+        "utility_gain_vs_lower": 0.0,
+        "utility_gain_vs_higher": 0.3474735862657759,
+        "stopping_constraint": "buffer",
+        "switch_suppressed": false,
+        "human": "Selected 360p at priority 1.72; next upgrade gain is 0.347, stopped by buffer."
+      }
+    }
+  ],
+  "window_budget_kbit": 23040.0,
+  "used_kbit": 19200,
+  "predicted_min_buffer_s": 5,
+  "constraints_binding": []
+}

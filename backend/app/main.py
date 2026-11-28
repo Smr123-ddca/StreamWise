@@ -5,6 +5,7 @@ from fastapi.responses import HTMLResponse
 
 from .api import analysis_router, video_router
 from .config import get_settings
+from .modules.decision_engine.api import router as decision_router
 
 settings = get_settings()
 
@@ -41,6 +42,7 @@ app.add_middleware(
 
 # Register API routers
 app.include_router(video_router)
+app.include_router(decision_router)
 app.include_router(analysis_router)
 
 
