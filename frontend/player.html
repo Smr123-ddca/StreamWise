@@ -7,6 +7,7 @@
   <title>StreamWise – HLS Playback Verification</title>
   <!-- hls.js loaded via CDN for MSE-based HLS playback in non-Safari browsers -->
   <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.15/dist/hls.min.js"></script>
+  <script src="./adaptive_controller.js"></script>
   <style>
     :root {
       color-scheme: dark;
@@ -64,6 +65,26 @@
       align-items: center;
     }
 
+    .sub-controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 14px;
+      align-items: center;
+      margin-top: 10px;
+      padding-top: 10px;
+      border-top: 1px solid var(--border);
+      font-size: 0.85rem;
+      color: var(--muted);
+    }
+
+    .toggle-label {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      color: var(--text);
+      cursor: pointer;
+    }
+
     input[type="text"],
     select {
       background: #0b1220;
@@ -115,6 +136,10 @@
       padding: 10px 12px;
     }
 
+    .metric-wide {
+      grid-column: 1 / -1;
+    }
+
     .metric-label {
       font-size: 0.75rem;
       color: var(--muted);
@@ -126,6 +151,13 @@
       font-weight: 600;
       margin-top: 4px;
       word-break: break-word;
+    }
+
+    .metric-sub {
+      font-size: 0.85rem;
+      font-weight: 400;
+      color: #cbd5e1;
+      margin-top: 4px;
     }
 
     .badge {
@@ -180,7 +212,7 @@
 <body>
   <div class="container">
     <h1>StreamWise – HLS Playback Verification</h1>
-    <p class="subtitle">Adaptive MPEG-TS HLS playback over HTTP via <code>hls.js</code> (with native HLS fallback).</p>
+    <p class="subtitle">Adaptive MPEG-TS HLS playback over HTTP via <code>hls.js</code> with Decision Engine integration and native fallback.</p>
 
     <div class="card">
       <div class="controls">
@@ -190,6 +222,18 @@
         <label for="quality-select" style="font-size:0.85rem;color:var(--muted);">Quality:</label>
         <select id="quality-select" disabled>
           <option value="-1">Auto</option>
+        </select>
+      </div>
+      <div class="sub-controls">
+        <label class="toggle-label" for="adaptive-toggle">
+          <input id="adaptive-toggle" type="checkbox" checked />
+          Enable Decision Engine Adaptation
+        </label>
+        <label for="preference-select">Preference:</label>
+        <select id="preference-select" aria-label="Viewer Preference">
+          <option value="quality_first">Quality First</option>
+          <option value="balanced" selected>Balanced</option>
+          <option value="data_saver">Data Saver</option>
         </select>
       </div>
       <div id="status-banner">Enter a packaged Video ID and click Load Video.</div>
@@ -214,8 +258,16 @@
           <div id="resolution-value" class="metric-value">-</div>
         </div>
         <div class="metric">
+          <div class="metric-label">Current Bitrate</div>
+          <div id="bitrate-value" class="metric-value">-</div>
+        </div>
+        <div class="metric">
           <div class="metric-label">Selected / Active Quality</div>
           <div id="quality-value" class="metric-value">-</div>
+        </div>
+        <div class="metric">
+          <div class="metric-label">Est. Throughput</div>
+          <div id="throughput-value" class="metric-value">-</div>
         </div>
         <div class="metric">
           <div class="metric-label">Time / Duration</div>
@@ -233,6 +285,19 @@
           <div class="metric-label">Last Segment</div>
           <div id="last-segment-value" class="metric-value">-</div>
         </div>
+        <div class="metric">
+          <div class="metric-label">Adaptation Mode</div>
+          <div class="metric-value"><span id="adaptation-mode-badge" class="badge">Decision Engine</span></div>
+        </div>
+        <div class="metric">
+          <div class="metric-label">Last Selected Rendition</div>
+          <div id="last-rendition-value" class="metric-value">-</div>
+        </div>
+        <div class="metric metric-wide">
+          <div class="metric-label">Last Decision Status &amp; Explanation</div>
+          <div id="decision-status-value" class="metric-value">Idle</div>
+          <div id="decision-explanation-value" class="metric-sub">-</div>
+        </div>
       </div>
     </div>
 
@@ -248,20 +313,29 @@
       const apiBase = params.get("api_base") || (
         window.location.protocol === "file:" ? "http://127.0.0.1:8000" : window.location.origin
       );
+      const Adaptive = window.StreamWiseAdaptive;
 
       const videoEl = document.getElementById("video-player");
       const videoIdInput = document.getElementById("video-id-input");
       const loadBtn = document.getElementById("load-btn");
       const qualitySelect = document.getElementById("quality-select");
+      const adaptiveToggle = document.getElementById("adaptive-toggle");
+      const preferenceSelect = document.getElementById("preference-select");
       const statusBanner = document.getElementById("status-banner");
       const stateBadge = document.getElementById("state-badge");
       const engineValue = document.getElementById("engine-value");
       const resolutionValue = document.getElementById("resolution-value");
+      const bitrateValue = document.getElementById("bitrate-value");
       const qualityValue = document.getElementById("quality-value");
+      const throughputValue = document.getElementById("throughput-value");
       const timeValue = document.getElementById("time-value");
       const bufferValue = document.getElementById("buffer-value");
       const segmentsValue = document.getElementById("segments-value");
       const lastSegmentValue = document.getElementById("last-segment-value");
+      const adaptationModeBadge = document.getElementById("adaptation-mode-badge");
+      const lastRenditionValue = document.getElementById("last-rendition-value");
+      const decisionStatusValue = document.getElementById("decision-status-value");
+      const decisionExplanationValue = document.getElementById("decision-explanation-value");
       const logOutput = document.getElementById("log-output");
 
       let hlsInstance = null;
@@ -282,25 +356,106 @@
         statusBanner.textContent = msg;
       }
 
+      function renderAdaptationMode(mode) {
+        if (!Adaptive) {
+          adaptationModeBadge.textContent = "Automatic (hls.js ABR)";
+          adaptationModeBadge.className = "badge";
+          return;
+        }
+        if (mode === Adaptive.ADAPTATION_MODES.DECISION_ENGINE) {
+          adaptationModeBadge.textContent = "Decision Engine";
+          adaptationModeBadge.className = "badge badge-ok";
+        } else if (mode === Adaptive.ADAPTATION_MODES.FALLBACK) {
+          adaptationModeBadge.textContent = "Fallback (hls.js ABR)";
+          adaptationModeBadge.className = "badge badge-warn";
+        } else {
+          adaptationModeBadge.textContent = "Automatic (hls.js ABR)";
+          adaptationModeBadge.className = "badge";
+        }
+      }
+
+      const decisionController = Adaptive
+        ? new Adaptive.AdaptiveDecisionController({
+            fetchFn: window.fetch.bind(window),
+            apiBase,
+            onApplyLevel: function (levelIndex, decision, _segmentContext, changedRendition) {
+              if (!hlsInstance) return;
+              // Use nextLevel for smooth boundary switching without flushing buffered media
+              if (hlsInstance.nextLevel !== levelIndex) {
+                hlsInstance.nextLevel = levelIndex;
+              }
+              if (changedRendition) {
+                log(
+                  `Decision Engine scheduled ${decision.segment_id} -> ${decision.rendition_id} ` +
+                  `(hls level ${levelIndex}, ${Math.round(decision.bitrate_kbps)} kbps)`
+                );
+              }
+              updateQualityReadout();
+            },
+            onRestoreAbr: function (reason) {
+              if (hlsInstance) {
+                hlsInstance.currentLevel = -1;
+                hlsInstance.nextLevel = -1;
+              }
+              log(reason);
+              updateQualityReadout();
+            },
+            onStatusUpdate: function (status) {
+              renderAdaptationMode(status.mode);
+              lastRenditionValue.textContent = status.lastSelectedRenditionId || "-";
+              if (status.lastDecisionStatus) {
+                decisionStatusValue.textContent = status.lastDecisionStatus;
+              }
+              if (typeof status.lastExplanation === "string") {
+                decisionExplanationValue.textContent = status.lastExplanation || "-";
+              }
+            },
+            onLog: log,
+          })
+        : null;
+
+      function getCurrentBufferSeconds() {
+        if (Adaptive) {
+          return Adaptive.getBufferedAheadSeconds(videoEl.buffered, videoEl.currentTime);
+        }
+        const cur = Number.isFinite(videoEl.currentTime) ? videoEl.currentTime : 0;
+        for (let i = 0; i < videoEl.buffered.length; i++) {
+          const start = videoEl.buffered.start(i);
+          const end = videoEl.buffered.end(i);
+          if (cur >= start - 0.1 && cur <= end) {
+            return Math.max(0, end - cur);
+          }
+        }
+        return 0;
+      }
+
+      function updateTelemetryReadout() {
+        if (!decisionController) return;
+        const est = decisionController.telemetry.getThroughputEstimate(
+          hlsInstance ? hlsInstance.bandwidthEstimate : null,
+          typeof navigator !== "undefined" ? navigator.connection : null
+        );
+        if (est.kbps !== null) {
+          const tag = est.source === "navigator_connection_hint" ? "hint" : "measured";
+          throughputValue.textContent = `${Math.round(est.kbps)} kbps (${tag})`;
+        } else {
+          throughputValue.textContent = "-";
+        }
+        return est;
+      }
+
       function updateMediaMetrics() {
         const cur = Number.isFinite(videoEl.currentTime) ? videoEl.currentTime : 0;
         const dur = Number.isFinite(videoEl.duration) ? videoEl.duration : 0;
         timeValue.textContent = `${cur.toFixed(2)}s / ${dur.toFixed(2)}s`;
 
-        let bufferedAhead = 0;
-        for (let i = 0; i < videoEl.buffered.length; i++) {
-          const start = videoEl.buffered.start(i);
-          const end = videoEl.buffered.end(i);
-          if (cur >= start - 0.1 && cur <= end) {
-            bufferedAhead = Math.max(0, end - cur);
-            break;
-          }
-        }
+        const bufferedAhead = getCurrentBufferSeconds();
         bufferValue.textContent = `${bufferedAhead.toFixed(2)}s`;
 
         if (videoEl.videoWidth > 0 && videoEl.videoHeight > 0) {
           resolutionValue.textContent = `${videoEl.videoWidth}x${videoEl.videoHeight}`;
         }
+        updateTelemetryReadout();
       }
 
       function formatLevelLabel(level, idx) {
@@ -315,15 +470,69 @@
         const selected = hlsInstance.currentLevel;
         const active = hlsInstance.loadLevel >= 0 ? hlsInstance.loadLevel : hlsInstance.currentLevel;
         const levels = hlsInstance.levels || [];
-        const activeText = active >= 0 && levels[active] ? formatLevelLabel(levels[active], active) : "Detecting";
-        const mode = hlsInstance.autoLevelEnabled ? "Auto" : "Manual";
-        qualityValue.textContent = `${mode} -> ${activeText}`;
-        if (selected !== Number(qualitySelect.value) && !hlsInstance.autoLevelEnabled) {
+        const activeLevel = active >= 0 ? levels[active] : null;
+        const activeText = activeLevel ? formatLevelLabel(activeLevel, active) : "Detecting";
+
+        let modeLabel = "Auto";
+        if (decisionController && decisionController.manualOverrideActive) {
+          modeLabel = "Manual";
+        } else if (
+          decisionController &&
+          decisionController.enabled &&
+          decisionController.mode === Adaptive.ADAPTATION_MODES.DECISION_ENGINE &&
+          hlsInstance.nextLevel >= 0
+        ) {
+          modeLabel = "Decision";
+        } else if (!hlsInstance.autoLevelEnabled) {
+          modeLabel = "Manual";
+        }
+        qualityValue.textContent = `${modeLabel} -> ${activeText}`;
+        bitrateValue.textContent =
+          activeLevel && activeLevel.bitrate ? `${Math.round(activeLevel.bitrate / 1000)} kbps` : "-";
+
+        if (selected !== Number(qualitySelect.value) && decisionController && decisionController.manualOverrideActive) {
           qualitySelect.value = String(selected);
         }
       }
 
+      function evaluateAdaptation(forceRequest = false) {
+        if (!hlsInstance || !decisionController || !decisionController.enabled) return;
+        const est = updateTelemetryReadout();
+        const bufferS = getCurrentBufferSeconds();
+        const levels = hlsInstance.levels || [];
+
+        // Apply cached segment-level decision for upcoming fragment boundaries
+        decisionController.applySegmentDecision({
+          currentTime: videoEl.currentTime,
+          bufferedAheadS: bufferS,
+          hlsLevels: levels,
+        });
+
+        // Request fresh decisions when periodic/delta conditions warrant
+        if (
+          est &&
+          est.kbps !== null &&
+          decisionController.shouldRequestDecision({
+            nowMs: Date.now(),
+            throughputKbps: est.kbps,
+            bufferS,
+            force: forceRequest,
+          })
+        ) {
+          decisionController.requestDecisions({
+            throughputKbps: est.kbps,
+            throughputVariance: est.variance,
+            bufferS,
+            currentTime: videoEl.currentTime,
+            hlsLevels: levels,
+          });
+        }
+      }
+
       function destroyPlayer() {
+        if (decisionController) {
+          decisionController.resetForVideo(null);
+        }
         if (hlsInstance) {
           hlsInstance.destroy();
           hlsInstance = null;
@@ -336,7 +545,12 @@
         segmentsValue.textContent = "0";
         lastSegmentValue.textContent = "-";
         resolutionValue.textContent = "-";
+        bitrateValue.textContent = "-";
         qualityValue.textContent = "-";
+        throughputValue.textContent = "-";
+        lastRenditionValue.textContent = "-";
+        decisionStatusValue.textContent = "Idle";
+        decisionExplanationValue.textContent = "-";
       }
 
       async function loadVideo(rawId) {
@@ -348,6 +562,11 @@
         }
 
         destroyPlayer();
+        if (decisionController) {
+          decisionController.resetForVideo(videoId);
+          decisionController.setEnabled(adaptiveToggle.checked);
+          decisionController.setPreferenceMode(preferenceSelect.value);
+        }
         setState("Loading", "warn");
         setBanner(`Checking HLS status for ${videoId}...`);
         log(`Checking status via HTTP: ${apiBase}/api/videos/${videoId}/hls/status`);
@@ -409,7 +628,11 @@
               segmentsValue.textContent = String(segmentsLoaded);
               const fragUrl = data.frag && data.frag.relurl ? data.frag.relurl : "segment";
               lastSegmentValue.textContent = fragUrl;
+              if (decisionController) {
+                decisionController.onFragmentLoaded(data.frag);
+              }
               updateMediaMetrics();
+              evaluateAdaptation(false);
             });
 
             hlsInstance.on(window.Hls.Events.ERROR, function (_event, data) {
@@ -438,6 +661,9 @@
           } else if (videoEl.canPlayType("application/vnd.apple.mpegurl")) {
             engineValue.textContent = "Native HLS";
             qualityValue.textContent = "Native ABR";
+            renderAdaptationMode("normal");
+            decisionStatusValue.textContent = "Native HLS (independent ABR)";
+            decisionExplanationValue.textContent = "Browser handles HLS natively; custom Decision Engine switching applies to hls.js.";
             videoEl.src = masterUrl;
             videoEl.play().catch(() => { });
           } else {
@@ -453,16 +679,60 @@
       qualitySelect.addEventListener("change", function () {
         if (!hlsInstance) return;
         const level = Number(qualitySelect.value);
-        hlsInstance.currentLevel = level;
-        log(level === -1 ? "Quality selection set to Auto ABR." : `Manual quality level requested: ${level}`);
+        if (level === -1) {
+          if (decisionController) {
+            decisionController.setManualOverride(false);
+          }
+          hlsInstance.currentLevel = -1;
+          hlsInstance.nextLevel = -1;
+          log("Quality selection set to Auto.");
+          evaluateAdaptation(true);
+        } else {
+          if (decisionController) {
+            decisionController.setManualOverride(true);
+          }
+          hlsInstance.currentLevel = level;
+          log(`Manual quality level requested: ${level}`);
+        }
         updateQualityReadout();
       });
 
-      videoEl.addEventListener("playing", () => { setState("Playing", "ok"); setBanner("Playback active."); updateMediaMetrics(); });
+      adaptiveToggle.addEventListener("change", function () {
+        if (!decisionController) return;
+        decisionController.setEnabled(adaptiveToggle.checked);
+        if (adaptiveToggle.checked) {
+          log("Decision Engine adaptation enabled.");
+          evaluateAdaptation(true);
+        }
+      });
+
+      preferenceSelect.addEventListener("change", function () {
+        if (!decisionController) return;
+        decisionController.setPreferenceMode(preferenceSelect.value);
+        log(`Viewer preference changed to '${preferenceSelect.value}'.`);
+        evaluateAdaptation(true);
+      });
+
+      videoEl.addEventListener("playing", () => {
+        setState("Playing", "ok");
+        setBanner("Playback active.");
+        updateMediaMetrics();
+        evaluateAdaptation(false);
+      });
       videoEl.addEventListener("pause", () => { if (!videoEl.ended) setState("Paused", "warn"); });
-      videoEl.addEventListener("waiting", () => { setState("Buffering", "warn"); });
-      videoEl.addEventListener("ended", () => { setState("Ended", "ok"); setBanner("Playback completed from beginning to end."); updateMediaMetrics(); });
-      videoEl.addEventListener("timeupdate", updateMediaMetrics);
+      videoEl.addEventListener("waiting", () => {
+        setState("Buffering", "warn");
+        evaluateAdaptation(false);
+      });
+      videoEl.addEventListener("ended", () => {
+        setState("Ended", "ok");
+        setBanner("Playback completed from beginning to end.");
+        updateMediaMetrics();
+      });
+      videoEl.addEventListener("timeupdate", () => {
+        updateMediaMetrics();
+        evaluateAdaptation(false);
+      });
       videoEl.addEventListener("loadedmetadata", updateMediaMetrics);
 
       loadBtn.addEventListener("click", () => loadVideo(videoIdInput.value));

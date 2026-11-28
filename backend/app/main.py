@@ -1,7 +1,7 @@
 from pathlib import Path
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, Response
 
 from .api import analysis_router, integration_router, video_router
 from .config import get_settings
@@ -54,6 +54,18 @@ def serve_playback_page() -> HTMLResponse:
     if not player_path.exists() or not player_path.is_file():
         raise HTTPException(status_code=404, detail="Playback verification page not found.")
     return HTMLResponse(content=player_path.read_text(encoding="utf-8"))
+
+
+@app.get("/adaptive_controller.js", include_in_schema=False)
+def serve_adaptive_controller() -> Response:
+    """Serve the frontend adaptive playback controller script explicitly."""
+    script_path = Path(__file__).resolve().parent.parent.parent / "frontend" / "adaptive_controller.js"
+    if not script_path.exists() or not script_path.is_file():
+        raise HTTPException(status_code=404, detail="Adaptive controller script not found.")
+    return Response(
+        content=script_path.read_text(encoding="utf-8"),
+        media_type="application/javascript; charset=utf-8",
+    )
 
 
 @app.get("/api/health")
